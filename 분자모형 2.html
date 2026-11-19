@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 분자 모형 시뮬레이터 - 아틀리에 에디션</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 3Dmol.js 라이브러리 -->
+    <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+    <!-- Google Fonts: Inter & Noto Sans KR -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', 'Noto Sans KR', sans-serif;
+            overflow-x: hidden;
+        }
+
+        /* 3D 뷰어 컨테이너 */
+        #viewer-container {
+            position: relative;
+            width: 100%;
+            height: 480px;
+            background-color: #0b111e;
+            border-radius: 0.85rem;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+
+        /* 첨부한 실제 사진을 전체 화면 배경으로 적용 */
+        .custom-photo-bg {
+            position: fixed;
+            inset: 0;
+            z-index: -2;
+            background-color: #141311;
+            background-image: url('IMG_0516_2.png');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+        }
+
+        /* 메인 카드 글래스모피즘 효과 (기존 레이아웃 유지하면서 배경과 어우러지게 디자인) */
+        .main-glass-card {
+            background: rgba(252, 251, 247, 0.88);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border: 1px solid rgba(255, 255, 255, 0.65);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.55);
+        }
+
+        /* 고양이 애니메이션 키프레임 */
+        @keyframes catWalk {
+            0%, 100% { transform: translateY(0px) rotate(0deg); }
+            25% { transform: translateY(-3px) rotate(-2deg); }
+            75% { transform: translateY(-3px) rotate(2deg); }
+        }
+        @keyframes tailWag {
+            0%, 100% { transform: rotate(-12deg); }
+            50% { transform: rotate(18deg); }
+        }
+        @keyframes catSleepBreathe {
+            0%, 100% { transform: scaleY(1); }
+            50% { transform: scaleY(1.06); }
+        }
+        @keyframes earTwitch {
+            0%, 90%, 100% { transform: rotate(0deg); }
+            95% { transform: rotate(-12deg); }
+        }
+
+        .cat-sprite {
+            position: fixed;
+            z-index: 5;
+            cursor: pointer;
+            transition: filter 0.2s;
+            user-select: none;
+        }
+        .cat-sprite:hover {
+            filter: drop-shadow(0 0 8px rgba(253, 224, 71, 0.8));
+        }
+        .walking-body {
+            animation: catWalk 0.6s infinite ease-in-out;
+        }
+        .cat-tail {
+            transform-origin: 18px 34px;
+            animation: tailWag 1.8s infinite ease-in-out;
+        }
+        .sleeping-cat {
+            transform-origin: bottom center;
+            animation: catSleepBreathe 3.2s infinite ease-in-out;
+        }
+        .cat-ear {
+            transform-origin: center bottom;
+            animation: earTwitch 5s infinite;
+        }
+
+        /* 말풍선 애니메이션 */
+        @keyframes popMeow {
+            0% { opacity: 0; transform: translateY(5px) scale(0.8); }
+            20% { opacity: 1; transform: translateY(-5px) scale(1); }
+            80% { opacity: 1; transform: translateY(-8px) scale(1); }
+            100% { opacity: 0; transform: translateY(-14px) scale(0.9); }
+        }
+        .meow-bubble {
+            position: fixed;
+            background: rgba(255, 255, 255, 0.95);
+            color: #1e293b;
+            font-size: 12px;
+            font-weight: 700;
+            padding: 3px 9px;
+            border-radius: 9999px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            pointer-events: none;
+            z-index: 30;
+            animation: popMeow 1.4s forwards ease-out;
+        }
+
+        /* 스크롤바 커스텀 */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(100, 116, 139, 0.4);
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body class="text-slate-800 min-h-screen flex flex-col items-center py-8 px-4 relative">
+
+    <!-- 첨부한 사진 배경 레이어 -->
+    <div id="photo-bg" class="custom-photo-bg" aria-hidden="true"></div>
+
+    <!-- 배경 이미지 파일 직접 선택 버튼 (로컬 실행 시 사진 경로가 다를 경우 즉시 적용 가능) -->
+    <div class="fixed top-3 right-3 z-30">
+        <label for="bg-upload" class="cursor-pointer inline-flex items-center gap-1.5 bg-slate-900/75 hover:bg-slate-900/95 text-slate-100 text-xs font-medium px-3 py-1.5 rounded-full backdrop-blur-md border border-white/20 shadow-lg transition">
+            <span>🖼️ 배경 사진 선택</span>
+        </label>
+        <input type="file" id="bg-upload" accept="image/*" class="hidden" onchange="changeBackgroundPhoto(event)">
+    </div>
+
+    <!-- 배경 곳곳을 돌아다니는 귀여운 고양이 레이어 -->
+    <div id="cats-layer" aria-hidden="true">
+        <!-- 1. 산책하는 치즈 태비 고양이 (JS로 좌우 이동 제어) -->
+        <div id="cat-walker-1" class="cat-sprite" style="bottom: 38px; left: 10%;" title="클릭해보세요!">
+            <svg width="64" height="52" viewBox="0 0 64 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <!-- 꼬리 -->
+                <path class="cat-tail" d="M18 34 Q6 24 10 14" stroke="#f59e0b" stroke-width="5" stroke-linecap="round"/>
+                <g class="walking-body">
+                    <!-- 다리 -->
+                    <rect x="20" y="38" width="5" height="11" rx="2.5" fill="#d97706"/>
+                    <rect x="38" y="38" width="5" height="11" rx="2.5" fill="#d97706"/>
+                    <!-- 몸통 -->
+                    <rect x="16" y="24" width="32" height="18" rx="9" fill="#fbbf24"/>
+                    <!-- 줄무늬 -->
+                    <path d="M26 24 V30 M32 24 V31 M38 24 V29" stroke="#d97706" stroke-width="2.5" stroke-linecap="round"/>
+                    <rect x="24" y="39" width="5" height="11" rx="2.5" fill="#fbbf24"/>
+                    <rect x="42" y="39" width="5" height="11" rx="2.5" fill="#fbbf24"/>
+                    <!-- 머리 -->
+                    <circle cx="47" cy="22" r="11" fill="#fbbf24"/>
+                    <!-- 귀 -->
+                    <polygon class="cat-ear" points="39,14 41,5 46,12" fill="#f59e0b"/>
+                    <polygon points="49,12 54,5 56,14" fill="#f59e0b"/>
+                    <!-- 눈과 코 -->
+                    <circle cx="51" cy="21" r="1.6" fill="#1e293b"/>
+                    <circle cx="55" cy="23" r="1.3" fill="#f43f5e"/>
+                </g>
+            </svg>
+        </div>
+
+        <!-- 2. 산책하는 턱시도(검정/흰색) 고양이 -->
+        <div id="cat-walker-2" class="cat-sprite" style="bottom: 18px; left: 75%;" title="클릭해보세요!">
+            <svg width="60" height="48" viewBox="0 0 64 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path class="cat-tail" d="M18 34 Q8 20 14 12" stroke="#1e293b" stroke-width="5" stroke-linecap="round"/>
+                <g class="walking-body">
+                    <rect x="20" y="38" width="5" height="11" rx="2.5" fill="#0f172a"/>
+                    <rect x="38" y="38" width="5" height="11" rx="2.5" fill="#0f172a"/>
+                    <rect x="16" y="24" width="32" height="18" rx="9" fill="#1e293b"/>
+                    <!-- 흰 앞발 양말 -->
+                    <rect x="24" y="39" width="5" height="11" rx="2.5" fill="#f8fafc"/>
+                    <rect x="42" y="39" width="5" height="11" rx="2.5" fill="#f8fafc"/>
+                    <!-- 머리 -->
+                    <circle cx="47" cy="22" r="11" fill="#1e293b"/>
+                    <polygon class="cat-ear" points="39,14 41,5 46,12" fill="#1e293b"/>
+                    <polygon points="49,12 54,5 56,14" fill="#1e293b"/>
+                    <!-- 금색 눈 -->
+                    <circle cx="51" cy="21" r="1.7" fill="#fde047"/>
+                    <circle cx="55" cy="23" r="1.3" fill="#fda4af"/>
+                </g>
+            </svg>
+        </div>
+
+        <!-- 3. 햇볕 아래 식빵 굽는 삼색 고양이 (좌측 하단 고정 위치에서 쌔근쌔근) -->
+        <div id="cat-loaf" class="cat-sprite sleeping-cat hidden sm:block" style="bottom: 95px; left: 5%;" title="햇볕 쬐는 중...">
+            <svg width="64" height="44" viewBox="0 0 64 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <!-- 식빵 몸통 -->
+                <rect x="10" y="16" width="44" height="22" rx="11" fill="#fffbeb"/>
+                <!-- 얼룩 무늬 -->
+                <circle cx="24" cy="22" r="7" fill="#d97706"/>
+                <circle cx="35" cy="24" r="6" fill="#334155"/>
+                <!-- 머리 -->
+                <circle cx="46" cy="20" r="10" fill="#fffbeb"/>
+                <path d="M46 10 A10 10 0 0 1 55 18 L46 20 Z" fill="#d97706"/>
+                <!-- 귀 -->
+                <polygon points="39,12 41,4 46,11" fill="#334155"/>
+                <polygon points="48,11 53,4 55,13" fill="#d97706"/>
+                <!-- 감은 눈 (Zzz) -->
+                <path d="M48 20 Q50 22 52 20" stroke="#1e293b" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+                <text x="53" y="10" fill="#fef08a" font-size="10" font-weight="bold">zZ</text>
+            </svg>
+        </div>
+
+        <!-- 4. 우측 구석에서 꼬리 흔드는 하얀 고양이 -->
+        <div id="cat-sitting" class="cat-sprite hidden md:block" style="bottom: 110px; right: 5%;" title="야옹!">
+            <svg width="54" height="58" viewBox="0 0 54 58" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path class="cat-tail" d="M36 48 Q48 44 46 32" stroke="#f8fafc" stroke-width="5" stroke-linecap="round"/>
+                <!-- 앉은 몸통 -->
+                <path d="M16 50 C14 34 18 24 27 24 C36 24 40 34 38 50 Z" fill="#f8fafc"/>
+                <!-- 머리 -->
+                <circle cx="27" cy="18" r="11" fill="#f8fafc"/>
+                <!-- 귀 -->
+                <polygon class="cat-ear" points="18,11 19,2 25,9" fill="#f8fafc"/>
+                <polygon points="29,9 35,2 36,11" fill="#f8fafc"/>
+                <polygon points="20,10 20,4 24,9" fill="#fbcfe8"/>
+                <polygon points="30,9 34,4 34,10" fill="#fbcfe8"/>
+                <!-- 눈 -->
+                <circle cx="23" cy="18" r="1.7" fill="#0284c7"/>
+                <circle cx="31" cy="18" r="1.7" fill="#0284c7"/>
+                <!-- 코 -->
+                <circle cx="27" cy="21" r="1.2" fill="#f472b6"/>
+            </svg>
+        </div>
+    </div>
+
+    <!-- 메인 컨테이너 (기존 레이아웃 그대로 유지) -->
+    <div class="max-w-4xl w-full main-glass-card rounded-2xl p-6 md:p-8 relative z-10">
+        <!-- 헤더 -->
+        <div class="mb-6 border-b border-slate-300/80 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div>
+                <h1 class="text-2xl md:text-3xl font-bold text-slate-900 flex items-center gap-2">
+                    <span>🧪 3D 분자 모형 시뮬레이터</span>
+                </h1>
+                <p class="text-slate-600 text-sm mt-1">화학식 또는 영문 화합물명을 입력하면 실시간 3D 입체 구조와 분자 정보를 생성합니다.</p>
+            </div>
+            <span class="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1 rounded-full bg-amber-100/90 text-amber-800 border border-amber-300 self-start sm:self-center">
+                🐱 배경의 고양이들을 클릭해 보세요!
+            </span>
+        </div>
+
+        <!-- 입력 및 컨트롤 영역 -->
+        <div class="flex flex-col md:flex-row gap-3 mb-4">
+            <input 
+                type="text" 
+                id="formula-input" 
+                placeholder="예: H2O, CH4, C6H6, C2H5OH, aspirin, caffeine, glucose" 
+                value="C8H10N4O2"
+                class="flex-1 px-4 py-3 bg-white/90 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600 font-mono text-lg shadow-inner"
+                onkeypress="if(event.key === 'Enter') loadMolecule()"
+            >
+            <button 
+                onclick="loadMolecule()" 
+                class="bg-emerald-700 hover:bg-emerald-800 text-white font-semibold px-6 py-3 rounded-lg transition duration-200 shadow-md cursor-pointer">
+                분자 생성
+            </button>
+        </div>
+
+        <!-- 확장된 빠른 예시 버튼 영역 (카테고리 탭 포함) -->
+        <div class="mb-6 bg-white/65 p-3.5 rounded-xl border border-slate-200/80">
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-2.5 pb-2 border-b border-slate-200/70">
+                <span class="text-xs font-bold uppercase tracking-wider text-slate-500">📚 추천 분자 라이브러리</span>
+                <div class="flex flex-wrap gap-1.5 text-xs" id="category-tabs">
+                    <button onclick="filterExamples('all')" class="cat-tab px-2.5 py-1 rounded-md font-semibold bg-slate-800 text-white transition">전체 (18)</button>
+                    <button onclick="filterExamples('basic')" class="cat-tab px-2.5 py-1 rounded-md font-medium bg-white/80 text-slate-600 hover:bg-slate-200 transition">기초 분자</button>
+                    <button onclick="filterExamples('organic')" class="cat-tab px-2.5 py-1 rounded-md font-medium bg-white/80 text-slate-600 hover:bg-slate-200 transition">유기 화합물</button>
+                    <button onclick="filterExamples('life')" class="cat-tab px-2.5 py-1 rounded-md font-medium bg-white/80 text-slate-600 hover:bg-slate-200 transition">의약 · 생체분자</button>
+                </div>
+            </div>
+            
+            <div id="example-buttons" class="flex flex-wrap items-center gap-2 text-xs sm:text-sm max-h-28 overflow-y-auto pr-1">
+                <!-- JS로 동적 렌더링 -->
+            </div>
+        </div>
+
+        <!-- 스타일 변경 및 상태 표시 바 -->
+        <div class="flex flex-wrap justify-between items-center gap-4 mb-3 bg-white/75 p-3 rounded-lg border border-slate-200/90">
+            <div class="flex flex-wrap items-center gap-2">
+                <span class="text-sm font-semibold text-slate-700">모형 스타일:</span>
+                <button onclick="setStyle('stick', this)" class="style-btn px-3 py-1.5 text-xs font-medium rounded bg-emerald-100 text-emerald-800 border border-emerald-400">공-막대 (Ball & Stick)</button>
+                <button onclick="setStyle('sphere', this)" class="style-btn px-3 py-1.5 text-xs font-medium rounded bg-white text-slate-700 border border-slate-300 hover:bg-slate-100">공간 채움 (Space-filling)</button>
+                <button onclick="setStyle('line', this)" class="style-btn px-3 py-1.5 text-xs font-medium rounded bg-white text-slate-700 border border-slate-300 hover:bg-slate-100">선형 (Wireframe)</button>
+            </div>
+            <div class="flex items-center gap-2">
+                <button onclick="resetCamera()" class="px-3 py-1.5 text-xs font-medium rounded bg-white text-slate-700 border border-slate-300 hover:bg-slate-100 transition">시점 초기화</button>
+                <button onclick="toggleSpin()" id="spin-btn" class="px-3 py-1.5 text-xs font-medium rounded bg-emerald-600 text-white hover:bg-emerald-700 transition">자동 회전: ON</button>
+            </div>
+        </div>
+
+        <!-- 상태 메시지 -->
+        <div id="status-msg" class="text-sm mb-3 text-emerald-700 font-medium h-5"></div>
+
+        <!-- 3D 뷰어 캔버스 + 화면 구석 분자 정보 카드 -->
+        <div id="viewer-container" class="shadow-inner">
+            <!-- 3Dmol 캔버스가 여기에 렌더링됨 -->
+
+            <!-- 화면 구석(우측 상단) 플로팅 분자 정보 카드 -->
+            <div id="molecule-info-card" class="absolute top-3 right-3 z-20 w-64 sm:w-72 bg-slate-900/80 backdrop-blur-md text-slate-100 border border-slate-600/60 rounded-xl p-3.5 shadow-xl transition-all duration-300">
+                <div class="flex items-center justify-between border-b border-slate-700/80 pb-2 mb-2">
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-emerald-300">분자 정보 카드</h3>
+                    </div>
+                    <button onclick="toggleInfoCard()" id="info-toggle-btn" class="text-xs text-slate-400 hover:text-white px-1.5 py-0.5 rounded bg-slate-800/80" title="접기/펼치기">
+                        접기
+                    </button>
+                </div>
+
+                <div id="info-card-body" class="space-y-1.5 text-xs">
+                    <div class="flex justify-between items-baseline gap-2">
+                        <span class="text-slate-400 shrink-0">화합물명</span>
+                        <span id="info-name" class="font-semibold text-white text-right truncate">Caffeine</span>
+                    </div>
+                    <div class="flex justify-between items-baseline gap-2">
+                        <span class="text-slate-400 shrink-0">분자식</span>
+                        <span id="info-formula" class="font-mono font-bold text-amber-300 text-right">C8H10N4O2</span>
+                    </div>
+                    <div class="flex justify-between items-baseline gap-2">
+                        <span class="text-slate-400 shrink-0">분자량</span>
+                        <span id="info-weight" class="font-mono text-slate-200 text-right">194.19 g/mol</span>
+                    </div>
+                    <div class="flex justify-between items-baseline gap-2">
+                        <span class="text-slate-400 shrink-0">구성 원자</span>
+                        <span id="info-atoms" class="font-mono text-slate-200 text-right">24개</span>
+                    </div>
+                    <div class="pt-1.5 border-t border-slate-700/70">
+                        <span class="text-slate-400 block mb-0.5">특징 및 용도</span>
+                        <p id="info-desc" class="text-slate-300 leading-relaxed text-[11px]">
+                            커피와 차에 함유된 천연 알칼로이드 각성제입니다.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 범례 및 조작 안내 -->
+        <div class="mt-4 flex flex-col md:flex-row justify-between items-start md:items-center text-xs text-slate-600 gap-2">
+            <div>
+                <span class="font-semibold text-slate-800">조작법:</span> 마우스 왼쪽 드래그(회전) · 휠 스크롤(확대/축소) · 오른쪽 드래그(이동)
+            </div>
+            <div class="flex flex-wrap items-center gap-3">
+                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-white border border-slate-400 inline-block"></span> H (수소)</span>
+                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-gray-500 inline-block"></span> C (탄소)</span>
+                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-blue-600 inline-block"></span> N (질소)</span>
+                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-red-600 inline-block"></span> O (산소)</span>
+                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-yellow-400 inline-block"></span> S (황)</span>
+                <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-green-500 inline-block"></span> Cl (염소)</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let viewer = null;
+        let currentStyle = 'stick';
+        let isSpinning = true;
+        let isCardCollapsed = false;
+
+        // 확장된 예시 분자 데이터베이스 (한국어 설명 포함)
+        const MOLECULE_EXAMPLES = [
+            // 기초 분자
+            { label: "물 (H₂O)", query: "H2O", category: "basic", koName: "물 (Water)", desc: "생명 유지에 필수적인 극성 용매로, 굽은형(104.5°) 구조를 가집니다." },
+            { label: "이산화탄소 (CO₂)", query: "CO2", category: "basic", koName: "이산화탄소", desc: "직선형(180°) 무극성 분자로 광합성과 온실 효과의 핵심 기체입니다." },
+            { label: "암모니아 (NH₃)", query: "NH3", category: "basic", koName: "암모니아", desc: "삼각뿔형 구조를 가지며 비료와 화학 공업의 중요한 원료입니다." },
+            { label: "메테인 (CH₄)", query: "CH4", category: "basic", koName: "메테인 (Methane)", desc: "가장 단순한 알케인으로 정사면체(109.5°) 입체 구조를 이룹니다." },
+            { label: "오존 (O₃)", query: "ozone", category: "basic", koName: "오존 (Ozone)", desc: "성층권에서 자외선을 흡수해 지구의 생명체를 보호하는 기체입니다." },
+            { label: "과산화수소 (H₂O₂)", query: "H2O2", category: "basic", koName: "과산화수소", desc: "소독제 및 표백제로 널리 쓰이는 산화제 분자입니다." },
+
+            // 유기 화합물
+            { label: "벤젠 (C₆H₆)", query: "benzene", category: "organic", koName: "벤젠 (Benzene)", desc: "6개의 탄소가 평면 정육각형 고리를 이루는 대표적인 방향족 탄화수소입니다." },
+            { label: "에탄올 (C₂H₅OH)", query: "ethanol", category: "organic", koName: "에탄올 (Ethanol)", desc: "소독용 알코올과 주류의 주성분으로 하이드록시기(-OH)를 가집니다." },
+            { label: "아세트산 (CH₃COOH)", query: "acetic acid", category: "organic", koName: "아세트산 (식초)", desc: "식초의 신맛을 내는 카복실산 계열의 유기산입니다." },
+            { label: "아세톤 (C₃H₆O)", query: "acetone", category: "organic", koName: "아세톤 (Acetone)", desc: "매니큐어 리무버 및 실험실 유기 용매로 쓰이는 가장 단순한 케톤입니다." },
+            { label: "나프탈렌 (C₁₀H₈)", query: "naphthalene", category: "organic", koName: "나프탈렌", desc: "두 개의 벤젠 고리가 융합된 구조로 방충제 원료로 사용됩니다." },
+            { label: "포름알데히드 (CH₂O)", query: "formaldehyde", category: "organic", koName: "폼알데하이드", desc: "가장 간단한 알데하이드로 수지 합성 등에 사용됩니다." },
+
+            // 의약 · 생체분자
+            { label: "카페인 (C₈H₁₀N₄O₂)", query: "C8H10N4O2", category: "life", koName: "카페인 (Caffeine)", desc: "커피와 차에 함유된 천연 알칼로이드로 중추신경을 각성시킵니다." },
+            { label: "아스피린 (C₉H₈O₄)", query: "aspirin", category: "life", koName: "아스피린 (Aspirin)", desc: "해열, 진통, 소염 작용을 하는 대표적인 합성 의약품입니다." },
+            { label: "포도당 (C₆H₁₂O₆)", query: "glucose", category: "life", koName: "포도당 (Glucose)", desc: "생명체의 주요 에너지원으로 사용되는 대표적인 단당류입니다." },
+            { label: "비타민 C (C₆H₈O₆)", query: "ascorbic acid", category: "life", koName: "비타민 C (아스코르브산)", desc: "항산화 작용과 콜라겐 합성에 필수적인 수용성 비타민입니다." },
+            { label: "도파민 (C₈H₁₁NO₂)", query: "dopamine", category: "life", koName: "도파민 (Dopamine)", desc: "뇌에서 보상과 쾌감, 운동 조절에 관여하는 신경전달물질입니다." },
+            { label: "페니실린 G", query: "penicillin G", category: "life", koName: "페니실린 G", desc: "푸른곰팡이에서 발견된 최초의 항생제로 세균 감염 치료에 쓰입니다." }
+        ];
+
+        // 페이지 로드 시 초기화
+        window.onload = function() {
+            renderExampleButtons('all');
+            initCatsAnimation();
+
+            const element = document.getElementById('viewer-container');
+            const config = { backgroundColor: '#0b111e' };
+            viewer = $3Dmol.createViewer(element, config);
+            loadMolecule(); // 초기 분자 로드 (카페인)
+        };
+
+        // 예시 버튼 필터링 및 렌더링
+        function filterExamples(category) {
+            // 탭 스타일 업데이트
+            document.querySelectorAll('.cat-tab').forEach(btn => {
+                btn.className = "cat-tab px-2.5 py-1 rounded-md font-medium bg-white/80 text-slate-600 hover:bg-slate-200 transition";
+            });
+            event.target.className = "cat-tab px-2.5 py-1 rounded-md font-semibold bg-slate-800 text-white transition";
+
+            renderExampleButtons(category);
+        }
+
+        function renderExampleButtons(category) {
+            const container = document.getElementById('example-buttons');
+            const filtered = category === 'all' 
+                ? MOLECULE_EXAMPLES 
+                : MOLECULE_EXAMPLES.filter(item => item.category === category);
+
+            container.innerHTML = filtered.map(item => `
+                <button 
+                    onclick="setExample('${item.query}')" 
+                    class="px-3 py-1 bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 border border-slate-300/90 hover:border-emerald-400 rounded-full transition shadow-2xs cursor-pointer">
+                    ${item.label}
+                </button>
+            `).join('');
+        }
+
+        // 예시 버튼 클릭 처리
+        function setExample(formula) {
+            document.getElementById('formula-input').value = formula;
+            loadMolecule();
+        }
+
+        // 정보 카드 접기/펼치기
+        function toggleInfoCard() {
+            const body = document.getElementById('info-card-body');
+            const btn = document.getElementById('info-toggle-btn');
+            isCardCollapsed = !isCardCollapsed;
+            if (isCardCollapsed) {
+                body.classList.add('hidden');
+                btn.innerText = '펼치기';
+            } else {
+                body.classList.remove('hidden');
+                btn.innerText = '접기';
+            }
+        }
+
+        // 시점 초기화
+        function resetCamera() {
+            if (!viewer) return;
+            viewer.zoomTo();
+            viewer.render();
+        }
+
+        // 분자 데이터 가져오기 및 렌더링
+        async function loadMolecule() {
+            const query = document.getElementById('formula-input').value.trim();
+            const statusEl = document.getElementById('status-msg');
+            
+            if (!query) {
+                statusEl.className = "text-sm mb-3 text-red-600 font-medium h-5";
+                statusEl.innerText = "화학식이나 화합물 이름을 입력해주세요.";
+                return;
+            }
+
+            statusEl.className = "text-sm mb-3 text-emerald-700 font-medium h-5";
+            statusEl.innerText = `'${query}'의 3D 구조와 분자 정보를 불러오는 중...`;
+
+            try {
+                // PubChem에서 3D SDF 및 상세 속성(분자식, 분자량, 이름) 동시 조회
+                const result = await fetchFromPubChemWithMeta(query);
+                let sdfData = result.sdf;
+                let meta = result.meta;
+                
+                // PubChem에 3D 데이터가 없는 경우 NCI Cactus API 보조 사용
+                if (!sdfData) {
+                    sdfData = await fetchFromCactus(query);
+                }
+
+                if (!sdfData) {
+                    throw new Error("해당 화학식의 3D 구조를 찾을 수 없습니다.");
+                }
+
+                // 기존 모델 초기화 후 새 모델 추가
+                viewer.clear();
+                const model = viewer.addModel(sdfData, "sdf");
+                const atomCount = model.selectedAtoms({}).length;
+                
+                // 스타일 적용 및 화면 맞춤
+                applyViewerStyle();
+                viewer.zoomTo();
+                viewer.render();
+                
+                if (isSpinning) {
+                    viewer.spin(true);
+                }
+
+                // 분자 정보 카드 업데이트
+                updateMoleculeInfoCard(query, meta, atomCount);
+
+                statusEl.className = "text-sm mb-3 text-emerald-700 font-medium h-5";
+                statusEl.innerText = `✅ '${query}' 분자 모형 렌더링 완료!`;
+
+            } catch (error) {
+                console.error(error);
+                statusEl.className = "text-sm mb-3 text-red-600 font-medium h-5";
+                statusEl.innerText = `❌ 오류: ${error.message} (철자나 화학식을 확인해 주세요)`;
+            }
+        }
+
+        // PubChem API에서 3D SDF와 화합물 속성(Property) 가져오기
+        async function fetchFromPubChemWithMeta(query) {
+            let cid = null;
+            let sdf = null;
+            let meta = null;
+
+            try {
+                // 1) 이름으로 CID 검색 시도
+                const nameCidRes = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(query)}/cids/JSON`);
+                if (nameCidRes.ok) {
+                    const data = await nameCidRes.json();
+                    cid = data.IdentifierList?.CID?.[0];
+                }
+
+                // 2) 실패 시 화학식(fastformula)으로 CID 검색 시도
+                if (!cid) {
+                    const formulaCidRes = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/fastformula/${encodeURIComponent(query)}/cids/JSON`);
+                    if (formulaCidRes.ok) {
+                        const data = await formulaCidRes.json();
+                        cid = data.IdentifierList?.CID?.[0];
+                    }
+                }
+
+                if (cid) {
+                    // 3D SDF와 분자 속성 병렬 요청
+                    const [sdfRes, propRes] = await Promise.all([
+                        fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/SDF?record_type=3d`),
+                        fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/property/MolecularFormula,MolecularWeight,Title/JSON`)
+                    ]);
+
+                    if (sdfRes.ok) {
+                        sdf = await sdfRes.text();
+                    }
+                    if (propRes.ok) {
+                        const propData = await propRes.json();
+                        meta = propData.PropertyTable?.Properties?.[0] || null;
+                    }
+                }
+            } catch (e) {
+                console.warn("PubChem 메타 조회 중 일부 실패:", e);
+            }
+
+            return { sdf, meta };
+        }
+
+        // NCI Cactus API에서 3D SDF 가져오기 (보조 수단)
+        async function fetchFromCactus(query) {
+            try {
+                const url = `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(query)}/sdf`;
+                const res = await fetch(url);
+                if (res.ok) {
+                    const text = await res.text();
+                    if (text.includes("V2000") || text.includes("V3000")) {
+                        return text;
+                    }
+                }
+                return null;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        // 화면 구석 분자 정보 카드 업데이트 함수
+        function updateMoleculeInfoCard(query, meta, atomCount) {
+            // 미리 정의된 예시 목록에 일치하는 항목이 있는지 확인
+            const preset = MOLECULE_EXAMPLES.find(
+                item => item.query.toLowerCase() === query.toLowerCase()
+            );
+
+            const displayName = preset ? preset.koName : (meta?.Title || query);
+            const formula = meta?.MolecularFormula || query.toUpperCase();
+            const weight = meta?.MolecularWeight ? `${Number(meta.MolecularWeight).toFixed(2)} g/mol` : "정보 없음";
+            const desc = preset 
+                ? preset.desc 
+                : `PubChem 데이터베이스에서 불러온 '${displayName}'의 3D 입체 구조 모델입니다.`;
+
+            document.getElementById('info-name').innerText = displayName;
+            document.getElementById('info-formula').innerText = formula;
+            document.getElementById('info-weight').innerText = weight;
+            document.getElementById('info-atoms').innerText = `${atomCount}개`;
+            document.getElementById('info-desc').innerText = desc;
+        }
+
+        // 모형 스타일 변경
+        function setStyle(style, btnElement) {
+            currentStyle = style;
+            
+            document.querySelectorAll('.style-btn').forEach(btn => {
+                btn.className = "style-btn px-3 py-1.5 text-xs font-medium rounded bg-white text-slate-700 border border-slate-300 hover:bg-slate-100";
+            });
+            if (btnElement) {
+                btnElement.className = "style-btn px-3 py-1.5 text-xs font-medium rounded bg-emerald-100 text-emerald-800 border border-emerald-400";
+            }
+
+            applyViewerStyle();
+            viewer.render();
+        }
+
+        function applyViewerStyle() {
+            if (!viewer) return;
+            viewer.setStyle({}, {});
+
+            if (currentStyle === 'stick') {
+                viewer.setStyle({}, {
+                    stick: { radius: 0.15, colorscheme: 'Jmol' },
+                    sphere: { scale: 0.3, colorscheme: 'Jmol' }
+                });
+            } else if (currentStyle === 'sphere') {
+                viewer.setStyle({}, {
+                    sphere: { colorscheme: 'Jmol' }
+                });
+            } else if (currentStyle === 'line') {
+                viewer.setStyle({}, {
+                    line: { colorscheme: 'Jmol' }
+                });
+            }
+        }
+
+        // 자동 회전 토글
+        function toggleSpin() {
+            isSpinning = !isSpinning;
+            const btn = document.getElementById('spin-btn');
+            if (isSpinning) {
+                viewer.spin(true);
+                btn.innerText = "자동 회전: ON";
+                btn.className = "px-3 py-1.5 text-xs font-medium rounded bg-emerald-600 text-white hover:bg-emerald-700 transition";
+            } else {
+                viewer.spin(false);
+                btn.innerText = "자동 회전: OFF";
+                btn.className = "px-3 py-1.5 text-xs font-medium rounded bg-slate-500 text-white hover:bg-slate-600 transition";
+            }
+        }
+
+        // 배경 곳곳을 돌아다니는 고양이 움직임 및 클릭 인터랙션
+        function initCatsAnimation() {
+            const walkers = [
+                { el: document.getElementById('cat-walker-1'), x: 10, dir: 1, speed: 0.045, min: 4, max: 88 },
+                { el: document.getElementById('cat-walker-2'), x: 78, dir: -1, speed: 0.035, min: 8, max: 90 }
+            ];
+
+            function moveCats() {
+                walkers.forEach(cat => {
+                    if (!cat.el) return;
+                    cat.x += cat.dir * cat.speed;
+
+                    if (cat.x >= cat.max) {
+                        cat.x = cat.max;
+                        cat.dir = -1;
+                    } else if (cat.x <= cat.min) {
+                        cat.x = cat.min;
+                        cat.dir = 1;
+                    }
+
+                    cat.el.style.left = `${cat.x}%`;
+                    // 이동 방향에 맞춰 고양이 좌우 반전
+                    cat.el.style.transform = cat.dir === 1 ? 'scaleX(1)' : 'scaleX(-1)';
+                });
+
+                requestAnimationFrame(moveCats);
+            }
+            requestAnimationFrame(moveCats);
+
+            // 모든 고양이 클릭 시 귀여운 말풍선('야옹~', '골골골...') 띄우기
+            const meows = ["야옹~ 🐾", "골골골... ☀️", "냐옹! 🧪", "그르릉~ 🌿", "미야옹~ 💕"];
+            document.querySelectorAll('.cat-sprite').forEach(catEl => {
+                catEl.addEventListener('click', (e) => {
+                    const bubble = document.createElement('div');
+                    bubble.className = 'meow-bubble';
+                    bubble.innerText = meows[Math.floor(Math.random() * meows.length)];
+                    bubble.style.left = `${e.clientX - 20}px`;
+                    bubble.style.top = `${e.clientY - 35}px`;
+                    document.body.appendChild(bubble);
+
+                    setTimeout(() => bubble.remove(), 1400);
+                });
+            });
+        }
+
+        // 사용자가 기기에서 직접 사진 파일을 선택했을 때 배경 즉시 교체
+        function changeBackgroundPhoto(event) {
+            const file = event.target.files?.[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const bgEl = document.getElementById('photo-bg');
+                if (bgEl) {
+                    bgEl.style.backgroundImage = `url('${e.target.result}')`;
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+    </script>
+</body>
+</html>
